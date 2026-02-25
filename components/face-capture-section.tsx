@@ -67,13 +67,14 @@ export default function FaceCaptureSection({
       return pixels.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / pixels.length;
     };
     
-    // RULE 1: Check for visible teeth (Happy indicator - HIGHEST PRIORITY)
-    const mouthY = Math.floor(canvas.height * 0.62);
-    const mouthHeight = Math.floor(canvas.height * 0.18);
-    const mouthWidth = Math.floor(canvas.width * 0.5);
+    // RULE 1: Check for mouth opening and brightness (Happy indicator - HIGHEST PRIORITY)
+    const mouthY = Math.floor(canvas.height * 0.60);
+    const mouthHeight = Math.floor(canvas.height * 0.20);
+    const mouthWidth = Math.floor(canvas.width * 0.55);
     const mouthStartX = Math.floor((canvas.width - mouthWidth) / 2);
     
-    let brightTeethPixels = 0;
+    let brightPixels = 0;
+    let darkPixels = 0;
     let mouthBrightness: number[] = [];
     
     for (let y = mouthY; y < mouthY + mouthHeight && y < canvas.height; y++) {
@@ -85,59 +86,68 @@ export default function FaceCaptureSection({
         const brightness = (r + g + b) / 3;
         mouthBrightness.push(brightness);
         
-        // Count very bright pixels (teeth appear white/bright)
-        if (brightness > 200) {
-          brightTeethPixels++;
+        // Count bright pixels (teeth/open mouth)
+        if (brightness > 180) {
+          brightPixels++;
+        }
+        // Count dark pixels (closed mouth/shadow)
+        if (brightness < 100) {
+          darkPixels++;
         }
       }
     }
     
     const totalMouthPixels = mouthHeight * mouthWidth;
-    const teethVisibilityRatio = brightTeethPixels / totalMouthPixels;
+    const brightRatio = brightPixels / totalMouthPixels;
+    const mouthVariance = calculateVariance(mouthBrightness);
     
-    // HIGH PRIORITY: Visible teeth = Happy
-    if (teethVisibilityRatio > 0.15) {
+    // LOWERED THRESHOLD: More achievable smile detection
+    // Happy = visible brightness in mouth area OR high variance (smile)
+    if (brightRatio > 0.08 || mouthVariance > 1500) {
       return 'happy';
     }
     
-    // RULE 2: Check for raised eyebrows with tension (Angry indicator)
-    const eyebrowY = Math.floor(canvas.height * 0.05);
-    const eyebrowHeight = Math.floor(canvas.height * 0.15);
-    const eyebrowWidth = Math.floor(canvas.width * 0.8);
-    const eyebrowStartX = Math.floor((canvas.width - eyebrowWidth) / 2);
+    // RULE 2: Check for furrowed brow (Angry indicator)
+    // Looking at center forehead area for tension/wrinkles
+    const foreheadY = Math.floor(canvas.height * 0.15);
+    const foreheadHeight = Math.floor(canvas.height * 0.25);
+    const foreheadWidth = Math.floor(canvas.width * 0.6);
+    const foreheadStartX = Math.floor((canvas.width - foreheadWidth) / 2);
     
-    let eyebrowBrightness: number[] = [];
-    let eyebrowEdges = 0;
+    let foreheadBrightness: number[] = [];
+    let contrastAreas = 0;
     
-    for (let y = eyebrowY; y < eyebrowY + eyebrowHeight && y < canvas.height; y++) {
-      for (let x = eyebrowStartX; x < eyebrowStartX + eyebrowWidth && x < canvas.width; x++) {
+    for (let y = foreheadY; y < foreheadY + foreheadHeight && y < canvas.height; y++) {
+      for (let x = foreheadStartX; x < foreheadStartX + foreheadWidth && x < canvas.width; x++) {
         const idx = (y * canvas.width + x) * 4;
         const r = data[idx];
         const g = data[idx + 1];
         const b = data[idx + 2];
         const brightness = (r + g + b) / 3;
-        eyebrowBrightness.push(brightness);
+        foreheadBrightness.push(brightness);
         
-        // Count high contrast areas (furrowed wrinkles)
-        if (x > eyebrowStartX && x < eyebrowStartX + eyebrowWidth - 1) {
+        // Detect high contrast (furrowed wrinkles between eyebrows)
+        if (x > foreheadStartX && x < foreheadStartX + foreheadWidth - 1) {
           const nextIdx = idx + 4;
           const nextBrightness = (data[nextIdx] + data[nextIdx + 1] + data[nextIdx + 2]) / 3;
-          if (Math.abs(brightness - nextBrightness) > 30) {
-            eyebrowEdges++;
+          const contrastDiff = Math.abs(brightness - nextBrightness);
+          if (contrastDiff > 25) {
+            contrastAreas++;
           }
         }
       }
     }
     
-    const eyebrowVariance = calculateVariance(eyebrowBrightness);
-    const eyebrowEdgeDensity = eyebrowEdges / (eyebrowHeight * eyebrowWidth);
+    const foreheadVariance = calculateVariance(foreheadBrightness);
+    const contrastDensity = contrastAreas / (foreheadHeight * foreheadWidth);
     
-    // Strongly raised/tensed eyebrows = Angry
-    if (eyebrowVariance > 550 && eyebrowEdgeDensity > 0.08) {
+    // LOWERED THRESHOLDS: More sensitive angry detection
+    // Angry = visible forehead tension/wrinkles OR high contrast density
+    if (foreheadVariance > 300 || contrastDensity > 0.04) {
       return 'angry';
     }
     
-    // RULE 3: No teeth + relaxed face = Neutral (default)
+    // RULE 3: Default to neutral if no strong indicators
     return 'neutral';
   };
 
