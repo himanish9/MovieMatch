@@ -65,143 +65,78 @@ export default function FaceCaptureSection({
       return (r + g + b) / 3;
     };
 
-    // Helper function to calculate variance
-    const calculateVariance = (pixels: number[]): number => {
-      if (pixels.length === 0) return 0;
-      const mean = pixels.reduce((a, b) => a + b, 0) / pixels.length;
-      return pixels.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / pixels.length;
-    };
-
-    // Helper function to count edge pixels (high contrast)
-    const countEdges = (region: { startX: number; startY: number; width: number; height: number }): number => {
-      let edges = 0;
-      for (let y = region.startY; y < region.startY + region.height && y < canvas.height; y++) {
-        for (let x = region.startX; x < region.startX + region.width && x < canvas.width; x++) {
-          if (x < region.startX + region.width - 1) {
-            const idx = (y * canvas.width + x) * 4;
-            const nextIdx = idx + 4;
-            const brightness = getBrightness(data[idx], data[idx + 1], data[idx + 2]);
-            const nextBrightness = getBrightness(data[nextIdx], data[nextIdx + 1], data[nextIdx + 2]);
-            if (Math.abs(brightness - nextBrightness) > 30) {
-              edges++;
-            }
-          }
-        }
-      }
-      return edges;
-    };
-    
-    // HAPPY: Teeth clearly visible + mouth open/widely stretched + cheeks raised
-    // Detect bright pixels in mouth region (teeth) and cheek region (raised)
+    // RULE 1: HAPPY - Teeth visible
+    // Check mouth region for bright pixels (teeth)
     const mouthY = Math.floor(canvas.height * 0.58);
     const mouthHeight = Math.floor(canvas.height * 0.22);
     const mouthWidth = Math.floor(canvas.width * 0.60);
     const mouthStartX = Math.floor((canvas.width - mouthWidth) / 2);
     
-    let mouthBrightness: number[] = [];
     let teethPixels = 0;
+    let totalMouthPixels = 0;
     
     for (let y = mouthY; y < mouthY + mouthHeight && y < canvas.height; y++) {
       for (let x = mouthStartX; x < mouthStartX + mouthWidth && x < canvas.width; x++) {
         const idx = (y * canvas.width + x) * 4;
         const brightness = getBrightness(data[idx], data[idx + 1], data[idx + 2]);
-        mouthBrightness.push(brightness);
+        totalMouthPixels++;
         
-        // Count very bright pixels (teeth are bright)
-        if (brightness > 190) {
+        // Bright pixels = visible teeth
+        if (brightness > 175) {
           teethPixels++;
         }
       }
     }
     
-    // Check cheeks for raised appearance (higher brightness on sides)
-    const cheekY = Math.floor(canvas.height * 0.45);
-    const cheekHeight = Math.floor(canvas.height * 0.15);
-    const leftCheekX = Math.floor(canvas.width * 0.1);
-    const rightCheekX = Math.floor(canvas.width * 0.65);
-    const cheekWidth = Math.floor(canvas.width * 0.25);
+    const teethVisibilityRatio = totalMouthPixels > 0 ? teethPixels / totalMouthPixels : 0;
     
-    let leftCheekBrightness: number[] = [];
-    let rightCheekBrightness: number[] = [];
-    
-    for (let y = cheekY; y < cheekY + cheekHeight && y < canvas.height; y++) {
-      // Left cheek
-      for (let x = leftCheekX; x < leftCheekX + cheekWidth && x < canvas.width; x++) {
-        const idx = (y * canvas.width + x) * 4;
-        leftCheekBrightness.push(getBrightness(data[idx], data[idx + 1], data[idx + 2]));
-      }
-      // Right cheek
-      for (let x = rightCheekX; x < rightCheekX + cheekWidth && x < canvas.width; x++) {
-        const idx = (y * canvas.width + x) * 4;
-        rightCheekBrightness.push(getBrightness(data[idx], data[idx + 1], data[idx + 2]));
-      }
-    }
-    
-    const totalMouthPixels = mouthHeight * mouthWidth;
-    const teethVisibilityRatio = teethPixels / totalMouthPixels;
-    const mouthVariance = calculateVariance(mouthBrightness);
-    const leftCheekAvg = leftCheekBrightness.reduce((a, b) => a + b, 0) / Math.max(leftCheekBrightness.length, 1);
-    const rightCheekAvg = rightCheekBrightness.reduce((a, b) => a + b, 0) / Math.max(rightCheekBrightness.length, 1);
-    
-    // Happy when: clear teeth visible AND high mouth variance (smile shape) AND raised cheeks
-    if (teethVisibilityRatio > 0.06 && mouthVariance > 1200 && (leftCheekAvg > 110 || rightCheekAvg > 110)) {
+    // Happy: visible teeth (5% or more of mouth region is bright)
+    if (teethVisibilityRatio > 0.05) {
       return 'happy';
     }
     
-    // ANGRY: Eyebrows lowered/pulled together + eyes narrowed + jaw tense
-    // Detect furrowed brow (dark lines between eyebrows) and tension in facial muscles
-    const browY = Math.floor(canvas.height * 0.20);
-    const browHeight = Math.floor(canvas.height * 0.20);
-    const browWidth = Math.floor(canvas.width * 0.65);
+    // RULE 2: ANGRY - Eyebrows tight/furrowed
+    // Check eyebrow region for dark pixels and contrast (furrowed appearance)
+    const browY = Math.floor(canvas.height * 0.18);
+    const browHeight = Math.floor(canvas.height * 0.18);
+    const browWidth = Math.floor(canvas.width * 0.70);
     const browStartX = Math.floor((canvas.width - browWidth) / 2);
     
-    let browBrightness: number[] = [];
-    let browDarkPixels = 0;
+    let darkBrowPixels = 0;
+    let highContrastPixels = 0;
+    let totalBrowPixels = 0;
     
     for (let y = browY; y < browY + browHeight && y < canvas.height; y++) {
       for (let x = browStartX; x < browStartX + browWidth && x < canvas.width; x++) {
         const idx = (y * canvas.width + x) * 4;
         const brightness = getBrightness(data[idx], data[idx + 1], data[idx + 2]);
-        browBrightness.push(brightness);
+        totalBrowPixels++;
         
-        // Count dark pixels (furrowed wrinkles appear dark)
-        if (brightness < 80) {
-          browDarkPixels++;
+        // Dark pixels indicate furrowed/tense brows
+        if (brightness < 90) {
+          darkBrowPixels++;
+        }
+        
+        // Check horizontal contrast (wrinkle detection)
+        if (x < browStartX + browWidth - 1) {
+          const nextIdx = idx + 4;
+          const nextBrightness = getBrightness(data[nextIdx], data[nextIdx + 1], data[nextIdx + 2]);
+          if (Math.abs(brightness - nextBrightness) > 32) {
+            highContrastPixels++;
+          }
         }
       }
     }
     
-    const browVariance = calculateVariance(browBrightness);
-    const browDarkRatio = browDarkPixels / (browHeight * browWidth);
-    const browEdges = countEdges({ startX: browStartX, startY: browY, width: browWidth, height: browHeight });
-    const browEdgeDensity = browEdges / (browHeight * browWidth);
+    const darkBrowRatio = totalBrowPixels > 0 ? darkBrowPixels / totalBrowPixels : 0;
+    const contrastRatio = totalBrowPixels > 0 ? highContrastPixels / totalBrowPixels : 0;
     
-    // Check eyes for narrowing (detect horizontal lines)
-    const eyeY = Math.floor(canvas.height * 0.35);
-    const eyeHeight = Math.floor(canvas.height * 0.12);
-    const eyeWidth = Math.floor(canvas.width * 0.70);
-    const eyeStartX = Math.floor((canvas.width - eyeWidth) / 2);
-    
-    let eyeContrastAreas = 0;
-    for (let y = eyeY; y < eyeY + eyeHeight && y < canvas.height; y++) {
-      for (let x = eyeStartX; x < eyeStartX + eyeWidth - 1 && x < canvas.width; x++) {
-        const idx = (y * canvas.width + x) * 4;
-        const nextIdx = idx + 4;
-        const brightness = getBrightness(data[idx], data[idx + 1], data[idx + 2]);
-        const nextBrightness = getBrightness(data[nextIdx], data[nextIdx + 1], data[nextIdx + 2]);
-        if (Math.abs(brightness - nextBrightness) > 35) {
-          eyeContrastAreas++;
-        }
-      }
-    }
-    const eyeContrastDensity = eyeContrastAreas / (eyeHeight * eyeWidth);
-    
-    // Angry when: furrowed brow (high variance + dark pixels + edges) AND eye narrowing
-    if ((browVariance > 250 && browDarkRatio > 0.05 && browEdgeDensity > 0.025) && eyeContrastDensity > 0.03) {
+    // Angry: tight/furrowed eyebrows (enough dark pixels and contrast)
+    if (darkBrowRatio > 0.08 && contrastRatio > 0.035) {
       return 'angry';
     }
     
-    // NEUTRAL: Default - teeth not visible, mouth closed, relaxed
+    // RULE 3: NEUTRAL - Default (no visible teeth, relaxed eyebrows)
     return 'neutral';
   };
 
